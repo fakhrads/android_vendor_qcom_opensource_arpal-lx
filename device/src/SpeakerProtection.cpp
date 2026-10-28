@@ -70,6 +70,7 @@
 #include "SessionAlsaUtils.h"
 #include "kvh2xml.h"
 #include <agm/agm_api.h>
+#include <cutils/properties.h>
 
 #include<fstream>
 #include<sstream>
@@ -143,6 +144,19 @@ int SpeakerProtection::numberOfRequest;
 bool SpeakerProtection::mDspCallbackRcvd;
 std::shared_ptr<Device> SpeakerFeedback::obj = nullptr;
 int SpeakerFeedback::numSpeaker;
+
+/*
+ * Some devices tune the SP and VI modules entirely in ACDB, and their DSP rejects the
+ * operation mode, channel map and R0T0 config sent here (Xiaomi's PAL never sends it). The
+ * rejected config fails the graph connect, so neither the speaker nor the VI path opens.
+ * Such devices set this to run the modules on their ACDB config, without calibration.
+ */
+static bool useAcdbSpConfig()
+{
+    static const bool acdbOnly =
+            property_get_bool("ro.vendor.audio.spkr_prot.acdb_config", false);
+    return acdbOnly;
+}
 
 std::string getDefaultSpkrTempCtrl(uint8_t spkr_pos)
 {
@@ -749,7 +763,7 @@ int SpeakerProtection::spkrStartCalibration()
     }
 
     // Setting the values for VI module
-    if (customPayloadSize) {
+    if (customPayloadSize && !useAcdbSpConfig()) {
         ret = SessionAlsaUtils::setDeviceCustomPayload(rm, backEndNameTx,
                     customPayload, customPayloadSize);
         if (ret) {
@@ -1290,6 +1304,9 @@ SpeakerProtection::SpeakerProtection(struct pal_device *device,
     if (fp) {
         PAL_DBG(LOG_TAG, "Cal File exists. Reading from it");
         spkrCalState = SPKR_CALIBRATED;
+    }
+    else if (useAcdbSpConfig()) {
+        PAL_DBG(LOG_TAG, "SP config comes from ACDB, skip calibration");
     }
     else {
         PAL_DBG(LOG_TAG, "Calibration Not done");
@@ -1846,7 +1863,7 @@ int SpeakerProtection::viTxSetupThreadLoop()
     }
 
     // Setting the values for VI module
-    if (customPayloadSize) {
+    if (customPayloadSize && !useAcdbSpConfig()) {
         ret = SessionAlsaUtils::setDeviceCustomPayload(rm, backEndName,
                         viCustomPayload, viCustomPayloadSize);
         if (ret) {
@@ -2103,8 +2120,9 @@ int32_t SpeakerProtection::spkrProtProcessingMode(bool flag)
         }
 
         payloadSize = 0;
-        builder->payloadSPConfig(&payload, &payloadSize, miid,
-                PARAM_ID_SP_OP_MODE,(void *)&spModeConfg);
+        if (!useAcdbSpConfig())
+            builder->payloadSPConfig(&payload, &payloadSize, miid,
+                    PARAM_ID_SP_OP_MODE,(void *)&spModeConfg);
         if (payloadSize) {
             if (customPayload) {
                 free (customPayload);
