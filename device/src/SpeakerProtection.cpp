@@ -1883,20 +1883,27 @@ int SpeakerProtection::viTxSetupThreadLoop()
         goto err_pcm_open;
     }
 
-    PAL_DBG(LOG_TAG, "registering DC detection event for VI module");
-    payloadSize = sizeof(struct agm_event_reg_cfg);
-
-    /* Register for EVENT_ID_SPv5_SPEAKER_DIAGNOSTICS. */
-    event_cfg.event_id = EVENT_ID_SPv5_SPEAKER_DIAGNOSTICS;
-    event_cfg.event_config_payload_size = 0;
-    event_cfg.is_register = 1;
-
-    ret = SessionAlsaUtils::registerMixerEvent(virtMixer, pcmDevIdTx.at(0),
-                backEndName.c_str(), MODULE_VI,
-                (void *)&event_cfg, payloadSize);
-    if (ret) {
-        PAL_ERR(LOG_TAG, "Unable to register event to DSP");
+    /* The ACDB-tuned VI module has no speaker diagnostics event (the DSP returns
+     * -EOPNOTSUPP), so only register it when PAL configures the module itself. */
+    if (useAcdbSpConfig()) {
+        PAL_DBG(LOG_TAG, "VI config comes from ACDB, skip DC detection event");
+        ret = -EOPNOTSUPP;
     } else {
+        PAL_DBG(LOG_TAG, "registering DC detection event for VI module");
+        payloadSize = sizeof(struct agm_event_reg_cfg);
+
+        /* Register for EVENT_ID_SPv5_SPEAKER_DIAGNOSTICS. */
+        event_cfg.event_id = EVENT_ID_SPv5_SPEAKER_DIAGNOSTICS;
+        event_cfg.event_config_payload_size = 0;
+        event_cfg.is_register = 1;
+
+        ret = SessionAlsaUtils::registerMixerEvent(virtMixer, pcmDevIdTx.at(0),
+                    backEndName.c_str(), MODULE_VI,
+                    (void *)&event_cfg, payloadSize);
+        if (ret)
+            PAL_ERR(LOG_TAG, "Unable to register event to DSP");
+    }
+    if (!ret) {
         ret = rm->registerMixerEventCallback(pcmDevIdTx, sessionCb, (uint64_t)this, true);
         if (ret != 0)
             PAL_ERR(LOG_TAG, "Failed to register callback to rm");
@@ -1912,7 +1919,8 @@ int SpeakerProtection::viTxSetupThreadLoop()
     goto exit;
 
 deregister_cb:
-    if (txPcm) {
+    /* Nothing was registered when the VI config comes from ACDB. */
+    if (txPcm && !useAcdbSpConfig()) {
         event_cfg.is_register = 0;
 
         ret = SessionAlsaUtils::registerMixerEvent(virtMixer, pcmDevIdTx.at(0),
