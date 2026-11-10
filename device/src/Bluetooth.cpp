@@ -1850,13 +1850,13 @@ int BtA2dp::getDefaultConfig(pal_param_device_capability_t capability)
         return -ENOSYS;
 
     /*
-     * While a session is started the BT library owns the config it handed to
-     * startPlayback(); asking again would rebuild it under the running encoder.
+     * The BT library reports the codec of its current session, which BT updates
+     * before the framework hears of a new codec, so this is valid while a session
+     * streams or is suspended too. codecInfo is only consumed by the start paths,
+     * which run under mDeviceMutex and fetch it again first.
      */
-    if (a2dpState == A2DP_STATE_DISCONNECTED || a2dpState == A2DP_STATE_STARTED ||
-        param_bt_a2dp.a2dp_suspended) {
-        PAL_DBG(LOG_TAG, "encoder config not readable now, state %d suspended %d",
-                a2dpState, param_bt_a2dp.a2dp_suspended);
+    if (a2dpState == A2DP_STATE_DISCONNECTED) {
+        PAL_DBG(LOG_TAG, "encoder config not readable, A2DP source not open");
         return -EBUSY;
     }
 
