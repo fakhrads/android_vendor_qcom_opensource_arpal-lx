@@ -177,6 +177,7 @@ protected:
     int getPluginPayload(void **handle, bt_codec_t **btCodec,
                          bt_enc_payload_t **out_buf,
                          codec_type codecType);
+    int getEncoderSampleRate(codec_format_t format, void *info, uint32_t *sampleRate);
     int configureCOPModule(int32_t pcmId, const char *backendName, uint32_t tagId, uint32_t streamMapDir, bool isFbpayload);
     int configureRATModule(int32_t pcmId, const char *backendName, uint32_t tagId, bool isFbpayload);
     int configurePCMConverterModule(int32_t pcmId, const char *backendName, uint32_t tagId, bool isFbpayload);
@@ -280,6 +281,7 @@ public:
     int start();
     int stop();
     bool isDeviceReady() override;
+    int getDefaultConfig(pal_param_device_capability_t capability) override;
     int32_t setDeviceParameter(uint32_t param_id, void *param) override;
     int32_t getDeviceParameter(uint32_t param_id, void **param) override;
 

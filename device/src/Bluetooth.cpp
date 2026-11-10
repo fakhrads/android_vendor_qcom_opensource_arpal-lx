@@ -235,6 +235,56 @@ done:
     return status;
 }
 
+/*
+ * Reads the encoder PCM rate of a codec config through its plugin, the same
+ * way getPluginPayload() does, without touching the members of a running session.
+ */
+int Bluetooth::getEncoderSampleRate(codec_format_t format, void *info, uint32_t *sampleRate)
+{
+    std::string lib_path;
+    open_fn_t plugin_open_fn = NULL;
+    bt_codec_t *codec = NULL;
+    bt_enc_payload_t *payload = NULL;
+    void *handle = NULL;
+    int status = 0;
+
+    lib_path = rm->getBtCodecLib(format, "enc");
+    if (lib_path.empty())
+        return -ENOSYS;
+
+    handle = dlopen(lib_path.c_str(), RTLD_NOW);
+    if (handle == NULL) {
+        PAL_ERR(LOG_TAG, "failed to dlopen lib %s", lib_path.c_str());
+        return -EINVAL;
+    }
+
+    plugin_open_fn = (open_fn_t)dlsym(handle, "plugin_open");
+    if (!plugin_open_fn) {
+        status = -EINVAL;
+        goto done;
+    }
+
+    status = plugin_open_fn(&codec, format, ENC);
+    if (status) {
+        codec = NULL;
+        goto done;
+    }
+
+    status = codec->plugin_populate_payload(codec, info, (void **)&payload);
+    if (status == 0) {
+        if (payload)
+            *sampleRate = payload->sample_rate;
+        else
+            status = -EINVAL;
+    }
+
+done:
+    if (codec)
+        codec->close_plugin(codec);
+    dlclose(handle);
+    return status;
+}
+
 int Bluetooth::checkAndUpdateCustomPayload(uint8_t **paramData, size_t *paramSize)
 {
     int ret = -EINVAL;
@@ -1774,6 +1824,61 @@ int BtA2dp::stopPlayback()
 
     PAL_DBG(LOG_TAG, "Stop A2DP playback, total active sessions :%d",
             totalActiveSessionRequests);
+    return 0;
+}
+
+/*
+ * The PCM config the mixer feeding this A2DP device should run at, read from the
+ * negotiated encoder config while the source is connected but not streaming.
+ * Only aptX Adaptive at 44.1 kHz asks for 44.1 kHz, so 44.1 kHz content reaches
+ * the encoder without resampling; every other codec keeps the 48 kHz mixer.
+ */
+int BtA2dp::getDefaultConfig(pal_param_device_capability_t capability)
+{
+    struct dynamic_media_config *config = capability.config;
+    uint8_t multi_cast = 0, num_dev = 1;
+    codec_format_t format = CODEC_TYPE_INVALID;
+    uint32_t encoderRate = 0;
+    void *info = NULL;
+
+    if (deviceAttr.id != PAL_DEVICE_OUT_BLUETOOTH_A2DP || !capability.is_playback || !config)
+        return -EINVAL;
+
+    std::lock_guard<std::mutex> lock(mDeviceMutex);
+
+    if (!bt_lib_source_handle || !audio_get_enc_config_api)
+        return -ENOSYS;
+
+    /*
+     * While a session is started the BT library owns the config it handed to
+     * startPlayback(); asking again would rebuild it under the running encoder.
+     */
+    if (a2dpState == A2DP_STATE_DISCONNECTED || a2dpState == A2DP_STATE_STARTED ||
+        param_bt_a2dp.a2dp_suspended) {
+        PAL_DBG(LOG_TAG, "encoder config not readable now, state %d suspended %d",
+                a2dpState, param_bt_a2dp.a2dp_suspended);
+        return -EBUSY;
+    }
+
+    info = audio_get_enc_config_api(get_session_type(), &multi_cast, &num_dev,
+                                    (audio_format_t *)&format);
+    if (info == NULL || format == CODEC_TYPE_INVALID) {
+        PAL_DBG(LOG_TAG, "no encoder config yet");
+        return -EAGAIN;
+    }
+
+    if (format == CODEC_TYPE_APTX_AD &&
+        getEncoderSampleRate(format, info, &encoderRate) != 0)
+        encoderRate = 0;
+
+    memset(config, 0, sizeof(struct dynamic_media_config));
+    config->sample_rate[0] =
+            (format == CODEC_TYPE_APTX_AD && encoderRate == (uint32_t)SAMPLINGRATE_44K) ?
+            (uint32_t)SAMPLINGRATE_44K : (uint32_t)SAMPLINGRATE_48K;
+    config->jack_status = true;
+
+    PAL_INFO(LOG_TAG, "codec 0x%x encoder rate %u, mixer rate %u",
+             (uint32_t)format, encoderRate, config->sample_rate[0]);
     return 0;
 }
 
