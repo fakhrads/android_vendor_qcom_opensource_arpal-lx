@@ -415,6 +415,54 @@ StreamPCM::~StreamPCM()
     session = nullptr;
 }
 
+/*
+ * Xiaomi VoIP Rx graphs carry a handset volume boost module, tagged
+ * 0x0C000046. The stock HAL (MiStreamOutPrimary::updateVoipVolumeBoost)
+ * sends PAL param 0xff000026 with is_voip_handset_volume_boost every time a
+ * VoIP stream is configured on the handset, and the stock PAL
+ * (StreamPCM::setParameters) turns that into the tag key vector
+ * {0x0C000046: value} on tag 0x0C000046. The flag is off unless the user
+ * enables the boost, so stock always switches the module off. Without it the
+ * module keeps its ACDB default.
+ */
+static constexpr uint32_t TAG_XIAOMI_VOIP_HANDSET_VOLUME_BOOST = 0x0C000046;
+
+void StreamPCM::disableVoipHandsetVolumeBoost()
+{
+    bool onHandset = false;
+
+    if (mStreamAttr->type != PAL_STREAM_VOIP_RX || !session)
+        return;
+
+    for (auto &dev : mDevices) {
+        if (dev->getSndDeviceId() == PAL_DEVICE_OUT_HANDSET) {
+            onHandset = true;
+            break;
+        }
+    }
+    if (!onHandset)
+        return;
+
+    size_t kvSize = sizeof(pal_key_vector_t) + sizeof(pal_key_value_pair_t);
+    effect_pal_payload_t *payload =
+        (effect_pal_payload_t *)calloc(1, sizeof(effect_pal_payload_t) + kvSize);
+    if (!payload) {
+        PAL_ERR(LOG_TAG, "VoIP handset boost: calloc failed");
+        return;
+    }
+    payload->isTKV = PARAM_TKV;
+    payload->tag = TAG_XIAOMI_VOIP_HANDSET_VOLUME_BOOST;
+    payload->payloadSize = kvSize;
+    pal_key_vector_t *kv = (pal_key_vector_t *)payload->payload;
+    kv->num_tkvs = 1;
+    kv->kvp[0].key = TAG_XIAOMI_VOIP_HANDSET_VOLUME_BOOST;
+    kv->kvp[0].value = 0;
+
+    int32_t status = session->setTKV(this, MODULE, payload);
+    PAL_INFO(LOG_TAG, "VoIP handset volume boost off, status %d", status);
+    free(payload);
+}
+
 //TBD: move this to Stream, why duplicate code?
 int32_t StreamPCM::start()
 {
@@ -708,6 +756,7 @@ int32_t StreamPCM::start()
         }
         rm->unlockActiveStream();
         rm->checkAndSetDutyCycleParam();
+        disableVoipHandsetVolumeBoost();
     } else if (currentState == STREAM_STARTED) {
         PAL_INFO(LOG_TAG, "Stream already started, state %d", currentState);
         goto exit;

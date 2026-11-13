@@ -83,6 +83,8 @@ public:
    static int32_t isSampleRateSupported(uint32_t sampleRate);
    static int32_t isChannelSupported(uint32_t numChannels);
    static int32_t isBitWidthSupported(uint32_t bitWidth);
+private:
+   void disableVoipHandsetVolumeBoost();
 };
 
 #endif//STREAMPCM_H_
