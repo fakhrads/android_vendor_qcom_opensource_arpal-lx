@@ -463,6 +463,24 @@ void StreamPCM::disableVoipHandsetVolumeBoost()
     free(payload);
 }
 
+/*
+ * start() covers a call that opens on the handset. A call that moves to the
+ * handset later (from the speaker, a headset or BT) only reconnects the
+ * device leg of the running graph here, so the boost is switched off again
+ * once the handset is connected, whatever state the module came back in.
+ * The caller holds mStreamMutex, as in start().
+ */
+int StreamPCM::connectStreamDevice_l(Stream* streamHandle, struct pal_device *dattr)
+{
+    int status = Stream::connectStreamDevice_l(streamHandle, dattr);
+
+    if (status == 0 && dattr && dattr->id == PAL_DEVICE_OUT_HANDSET &&
+        currentState == STREAM_STARTED)
+        disableVoipHandsetVolumeBoost();
+
+    return status;
+}
+
 //TBD: move this to Stream, why duplicate code?
 int32_t StreamPCM::start()
 {

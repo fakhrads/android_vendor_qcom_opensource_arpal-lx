@@ -83,6 +83,7 @@ public:
    static int32_t isSampleRateSupported(uint32_t sampleRate);
    static int32_t isChannelSupported(uint32_t numChannels);
    static int32_t isBitWidthSupported(uint32_t bitWidth);
+   int connectStreamDevice_l(Stream* streamHandle, struct pal_device *dattr) override;
 private:
    void disableVoipHandsetVolumeBoost();
 };
